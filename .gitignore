@@ -1,0 +1,7 @@
+# Model outputs and checkpoints
+out/
+__pycache__/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
