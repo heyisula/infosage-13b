@@ -24,10 +24,10 @@ This repository contains a Jupyter-based fine-tuning pipeline and a chatbot with
 ### Dataset: FineWeb-Edu
 The model is fine-tuned on **500,000 samples** from [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu), a curated dataset of high-quality educational web content.
 
-### RAG Pipeline
+### RAG Pipeline (Layered Retrieval)
+- **Layer 1 — Local FAISS Index**: Pre-built vector store with ~100K passages (instant, offline)
+- **Layer 2 — Live HuggingFace Search**: Streams FineWeb-Edu in real-time, filters by keywords, ranks by embedding similarity (requires internet)
 - **Embedding Model**: `sentence-transformers/all-MiniLM-L6-v2`
-- **Vector Store**: FAISS (IndexFlatIP with cosine similarity)
-- **Index Size**: ~100,000 document passages
 - **Retrieval**: Top-3 most relevant passages per query
 
 ## 📈 Training Configuration
