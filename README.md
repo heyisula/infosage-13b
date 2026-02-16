@@ -1,40 +1,49 @@
 # FineWeb-Edu LLM Training
 
-A complete pipeline for training a mini-LLM (GPT-2 architecture) from scratch using the High-Quality FineWeb-Edu dataset.
+A complete pipeline for fine-tuning **GPT-2 Medium (355M params)** on the FineWeb-Edu dataset, with a **RAG-enhanced chatbot** that retrieves relevant educational content in real-time.
 
 ## 🚀 Project Overview
 
-This repository contains a Jupyter-based training pipeline for a compact transformer model. The goal is to demonstrate the end-to-end process of data materialization, tokenizer training, model configuration, and distributed training on GPUs.
+This repository contains a Jupyter-based fine-tuning pipeline and a chatbot with Retrieval-Augmented Generation (RAG). The model is fine-tuned on high-quality educational web content and can search through its knowledge base to provide grounded answers.
 
 ### Key Features:
-- **Custom Tokenizer**: BPE-based tokenizer trained specifically on the FineWeb-Edu corpus.
-- **Optimized Architecture**: A lightweight GPT-2 configuration designed for fast iteration and specific educational content.
-- **Efficient Training**: Utilizes `fp16` mixed-precision and gradient accumulation to perform effective training on consumer-grade GPUs (e.g., RTX 4060).
+- **Fine-Tuned GPT-2 Medium**: 355M parameter pre-trained model, fine-tuned on educational content.
+- **VRAM Optimized**: Gradient checkpointing + Adafactor + FP16 — trains on consumer GPUs (8GB VRAM).
+- **RAG-Enhanced Chat**: FAISS vector search retrieves relevant passages from FineWeb-Edu in real-time.
 
 ## 🛠 Technical Specifications
 
-### Model Architecture (GPT-2)
-- **Vocabulary Size**: 50,000
-- **Context Length**: 512 tokens
-- **Embedding Dimension**: 512
-- **Layers**: 8
-- **Attention Heads**: 8
+### Model Architecture (GPT-2 Medium)
+- **Parameters**: ~355 Million
+- **Vocabulary Size**: 50,257 (GPT-2 pre-trained tokenizer)
+- **Context Length**: 1,024 tokens
+- **Embedding Dimension**: 1,024
+- **Layers**: 24
+- **Attention Heads**: 16
 
 ### Dataset: FineWeb-Edu
-The model is trained on a materialized subset of **200,000 samples** from the [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) dataset, which contains high-quality educational web content.
+The model is fine-tuned on **500,000 samples** from [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu), a curated dataset of high-quality educational web content.
+
+### RAG Pipeline
+- **Embedding Model**: `sentence-transformers/all-MiniLM-L6-v2`
+- **Vector Store**: FAISS (IndexFlatIP with cosine similarity)
+- **Index Size**: ~100,000 document passages
+- **Retrieval**: Top-3 most relevant passages per query
 
 ## 📈 Training Configuration
-The latest training run completed **12,500 steps** (1 full epoch) with the following parameters:
-- **Learning Rate**: 5e-5
-- **Effective Batch Size**: 16 (2 per device × 8 gradient accumulation steps)
+- **Base Model**: `gpt2-medium` (pre-trained)
+- **Learning Rate**: 2e-5 (with 500-step warmup)
+- **Effective Batch Size**: 16 (1 per device × 16 gradient accumulation)
 - **Precision**: FP16 mixed precision
-- **Final Training Loss**: ~4.41
+- **Optimizer**: Adafactor (memory-efficient)
+- **Gradient Checkpointing**: Enabled (~40% VRAM savings)
 
 ## 📂 Project Structure
 
-- `train.ipynb`: The main notebook containing the full training pipeline.
-- `chat_llm.py`: Script for interacting with the trained model (Utility/CLI).
-- `out/`: Directory containing checkpoints and the trained tokenizer (ignored by git).
+- `train.ipynb`: Fine-tuning pipeline (data loading, tokenization, training, RAG index building).
+- `chat_llm.py`: RAG-enhanced chatbot for interacting with the fine-tuned model.
+- `build_rag_index.py`: Standalone script to build/rebuild the FAISS knowledge base.
+- `out/`: Directory containing model checkpoints, tokenizer, and RAG index (git-ignored).
 - `.gitignore`: Configured to exclude large model shards and temporary files.
 
 ## ⚙️ Installation & Usage
@@ -47,11 +56,22 @@ The latest training run completed **12,500 steps** (1 full epoch) with the follo
 
 2. **Install Dependencies**:
    ```bash
-   pip install torch datasets transformers tokenizers tqdm
+   pip install torch datasets transformers tqdm
+   pip install faiss-cpu sentence-transformers  # for RAG
    ```
 
-3. **Train the Model**:
-   Open `train.ipynb` in your Jupyter environment and run all cells. Ensure CUDA is available for GPU acceleration.
+3. **Fine-Tune the Model**:
+   Open `train.ipynb` in Jupyter and run all cells. Requires CUDA GPU with ≥8GB VRAM.
+
+4. **Build RAG Index** (if not built during training):
+   ```bash
+   python build_rag_index.py
+   ```
+
+5. **Chat with the Model**:
+   ```bash
+   python chat_llm.py
+   ```
 
 ## 📝 License
 This project is licensed under the MIT License.
