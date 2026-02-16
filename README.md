@@ -7,8 +7,8 @@ A complete pipeline for fine-tuning **GPT-2 Large (774M params)** on the FineWeb
 This repository contains a Jupyter-based fine-tuning pipeline and a chatbot with Retrieval-Augmented Generation (RAG). The model is fine-tuned on high-quality educational web content and can search through its knowledge base to provide grounded answers.
 
 ### Key Features:
-- **Fine-Tuned GPT-2 Large**: 774M parameter pre-trained model (highest reasoning capacity in GPT-2 family).
-- **Cloud Optimized**: Tailored for **T4 GPUs (15GB VRAM)** with gradient checkpointing + Adafactor + FP16.
+- **QLoRA Fine-Tuning**: Efficiently fine-tune GPT-2 Large using 4-bit quantization + LoRA adapters.
+- **Extreme VRAM Efficiency**: Fits a 774M model in ~5GB total VRAM (T4 optimized).
 - **Layered RAG Chat**: Combines local FAISS vector search with live HuggingFace streaming search.
 
 ## 🛠 Technical Specifications
