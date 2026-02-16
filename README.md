@@ -1,74 +1,66 @@
 # FineWeb-Edu LLM Training
 
-A complete pipeline for fine-tuning **GPT-2 Medium (355M params)** on the FineWeb-Edu dataset, with a **RAG-enhanced chatbot** that retrieves relevant educational content in real-time.
+A complete pipeline for fine-tuning **GPT-2 Large (774M params)** on the FineWeb-Edu dataset, with a **RAG-enhanced chatbot** that retrieves relevant educational content in real-time.
 
 ## 🚀 Project Overview
 
 This repository contains a Jupyter-based fine-tuning pipeline and a chatbot with Retrieval-Augmented Generation (RAG). The model is fine-tuned on high-quality educational web content and can search through its knowledge base to provide grounded answers.
 
 ### Key Features:
-- **Fine-Tuned GPT-2 Medium**: 355M parameter pre-trained model, fine-tuned on educational content.
-- **VRAM Optimized**: Gradient checkpointing + Adafactor + FP16 — trains on consumer GPUs (8GB VRAM).
-- **RAG-Enhanced Chat**: FAISS vector search retrieves relevant passages from FineWeb-Edu in real-time.
+- **Fine-Tuned GPT-2 Large**: 774M parameter pre-trained model (highest reasoning capacity in GPT-2 family).
+- **Cloud Optimized**: Tailored for **T4 GPUs (15GB VRAM)** with gradient checkpointing + Adafactor + FP16.
+- **Layered RAG Chat**: Combines local FAISS vector search with live HuggingFace streaming search.
 
 ## 🛠 Technical Specifications
 
-### Model Architecture (GPT-2 Medium)
-- **Parameters**: ~355 Million
-- **Vocabulary Size**: 50,257 (GPT-2 pre-trained tokenizer)
+### Model Architecture (GPT-2 Large)
+- **Parameters**: ~774 Million
+- **Vocabulary Size**: 50,257
+- **Layers**: 36
+- **Attention Heads**: 20
+- **Embedding Dimension**: 1280
 - **Context Length**: 1,024 tokens
-- **Embedding Dimension**: 1,024
-- **Layers**: 24
-- **Attention Heads**: 16
 
 ### Dataset: FineWeb-Edu
-The model is fine-tuned on **500,000 samples** from [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu), a curated dataset of high-quality educational web content.
+The model is fine-tuned on **1,000,000 samples** from [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu).
 
 ### RAG Pipeline (Layered Retrieval)
-- **Layer 1 — Local FAISS Index**: Pre-built vector store with ~100K passages (instant, offline)
-- **Layer 2 — Live HuggingFace Search**: Streams FineWeb-Edu in real-time, filters by keywords, ranks by embedding similarity (requires internet)
+- **Layer 1 — Local FAISS Index**: Pre-built vector store with ~100K passages (instant, offline).
+- **Layer 2 — Live HuggingFace Search**: Streams FineWeb-Edu in real-time from the cloud if local results are weak.
 - **Embedding Model**: `sentence-transformers/all-MiniLM-L6-v2`
-- **Retrieval**: Top-3 most relevant passages per query
+- **Retrieval**: Top-3 most relevant passages per query.
 
 ## 📈 Training Configuration
-- **Base Model**: `gpt2-medium` (pre-trained)
+- **Base Model**: `gpt2-large`
 - **Learning Rate**: 2e-5 (with 500-step warmup)
-- **Effective Batch Size**: 16 (1 per device × 16 gradient accumulation)
+- **Effective Batch Size**: 16 (2 per device × 8 gradient accumulation)
 - **Precision**: FP16 mixed precision
-- **Optimizer**: Adafactor (memory-efficient)
-- **Gradient Checkpointing**: Enabled (~40% VRAM savings)
+- **Optimizer**: Adafactor
+- **Gradient Checkpointing**: Enabled (Essential for 15GB VRAM)
 
 ## 📂 Project Structure
 
-- `train.ipynb`: Fine-tuning pipeline (data loading, tokenization, training, RAG index building).
-- `chat_llm.py`: RAG-enhanced chatbot for interacting with the fine-tuned model.
+- `train.ipynb`: Fine-tuning pipeline with Colab setup and Google Drive persistence.
+- `chat_llm.py`: RAG-enhanced chatbot with layered retrieval.
 - `build_rag_index.py`: Standalone script to build/rebuild the FAISS knowledge base.
-- `out/`: Directory containing model checkpoints, tokenizer, and RAG index (git-ignored).
-- `.gitignore`: Configured to exclude large model shards and temporary files.
+- `out/`: Directory containing model checkpoints and RAG index (git-ignored).
 
 ## ⚙️ Installation & Usage
 
-1. **Clone the repository**:
+### 1. Cloud Training (Recommended)
+1. Upload `train.ipynb` to **Google Colab**.
+2. Set Runtime to **T4 GPU**.
+3. Run the setup cells to mount Google Drive and install dependencies.
+4. Run all cells to fine-tune and build the RAG index. Matches are saved to your Drive.
+
+### 2. Local Chat
+Once trained:
+1. Download the `fineweb_edu_gpt2_large` folder from Drive to your local `out/` directory.
+2. Install local deps:
    ```bash
-   git clone https://github.com/heyisula/fineweb-edu-llm-training.git
-   cd fineweb-edu-llm-training
+   pip install torch transformers datasets faiss-cpu sentence-transformers
    ```
-
-2. **Install Dependencies**:
-   ```bash
-   pip install torch datasets transformers tqdm
-   pip install faiss-cpu sentence-transformers  # for RAG
-   ```
-
-3. **Fine-Tune the Model**:
-   Open `train.ipynb` in Jupyter and run all cells. Requires CUDA GPU with ≥8GB VRAM.
-
-4. **Build RAG Index** (if not built during training):
-   ```bash
-   python build_rag_index.py
-   ```
-
-5. **Chat with the Model**:
+3. Run the chat:
    ```bash
    python chat_llm.py
    ```
