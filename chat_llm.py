@@ -35,6 +35,10 @@ from transformers import (
     BitsAndBytesConfig
 )
 from peft import PeftModel
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
 # Configuration
 BASE_MODEL_ID = "NousResearch/Llama-2-13b-hf"
