@@ -14,6 +14,8 @@ Usage:
 
 import os
 os.environ['HF_HOME'] = 'D:/huggingface_cache'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import re
 import json
 import inspect
@@ -334,26 +336,19 @@ wordsegment.load()
 
 def tokens_to_spaced_text(token_ids, tokenizer, start_idx):
     """Decode tokens and fix missing spaces using word segmentation."""
-    # Standard decode - produces the merged text without spaces
     raw = tokenizer.decode(
         token_ids[start_idx:],
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False
     )
     
-    # Split on whitespace to get chunks (some spaces may already exist)
-    chunks = raw.split()
+    # Find runs of 9+ letters and segment them — leaves punctuation/numbers alone
+    def segment_run(match):
+        run = match.group(0)
+        return ' '.join(wordsegment.segment(run))
     
-    fixed_chunks = []
-    for chunk in chunks:
-        # Only try to segment chunks that look like merged words (no punctuation)
-        if chunk.isalpha() and len(chunk) > 8:
-            segmented = ' '.join(wordsegment.segment(chunk))
-            fixed_chunks.append(segmented)
-        else:
-            fixed_chunks.append(chunk)
-    
-    return ' '.join(fixed_chunks).strip()
+    result = re.sub(r'[a-zA-Z]{9,}', segment_run, raw)
+    return result.strip()
 
 
 def generate_response(prompt: str) -> str:
