@@ -37,7 +37,7 @@ ADAPTER_DIR = "out/final_model"
 RAG_DIR = "out/rag_index"
 
 TOP_K = 3                # passages to use as context
-MAX_NEW_TOKENS = 256
+MAX_NEW_TOKENS = 512
 TEMPERATURE = 0.5
 TOP_P = 0.9
 REPETITION_PENALTY = 1.2
