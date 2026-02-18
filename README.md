@@ -38,6 +38,8 @@ There's also the **InfoSage RAG chatbot** (`chat_llm.py`) that doesn't just rely
 | 🔍 **RAG Chat** | FAISS vector search + live HuggingFace fallback |
 | 💾 **Auto-Resume** | Checkpoints save to Google Drive; training resumes if Colab disconnects |
 | 🧹 **Memory Cleanup** | Throttled MemoryCallback (every 50 steps) for max throughput |
+| 🎨 **Liquid Glass UI** | Premium web interface with dark/light mode and VRAM monitoring |
+| ⚡ **Smart Controls** | One-click model loading/unloading with real-time status feedback |
 
 ---
 
@@ -113,6 +115,10 @@ This project uses the **NousResearch/Llama-2-13b-hf** community mirror, which is
 ```
 fineweb-edu-llm-training/
 ├── train.ipynb              # Fine-tuning notebook (H100-optimized)
+├── gui/                     # InfoSage Web Interface (Flask + HTML/CSS/JS)
+│   ├── app.py
+│   ├── static/
+│   └── templates/
 ├── chat_llm.py              # Llama-2-13B RAG chatbot
 ├── build_rag_index.py       # Standalone FAISS index builder
 ├── README.md                # Documentation
@@ -149,7 +155,10 @@ Once you've trained the model and downloaded the files into the `out/` folder:
 # 1. Install dependencies
 pip install torch transformers datasets faiss-cpu sentence-transformers peft bitsandbytes accelerate wordsegment tqdm
 
-# 2. Start chatting
+# 2. Start the InfoSage Interface (Recommended)
+python gui/app.py
+
+# Or run the CLI chatbot
 python chat_llm.py
 ```
 
