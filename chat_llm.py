@@ -26,13 +26,15 @@ import re
 import json
 import inspect
 import multiprocessing
+from threading import Thread
 import wordsegment
 import torch
 import numpy as np
 from transformers import (
     AutoModelForCausalLM, 
     AutoTokenizer, 
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
+    TextIteratorStreamer
 )
 from peft import PeftModel
 try:
@@ -46,16 +48,16 @@ ADAPTER_DIR = "out/final_model"
 RAG_DIR = "out/rag_index"
 
 TOP_K = 3                # passages to use as context
-MAX_NEW_TOKENS = 768
+MAX_NEW_TOKENS = 512
 TEMPERATURE = 0.5
 TOP_P = 0.9
 REPETITION_PENALTY = 1.2
 
 # Live search settings
 LIVE_SEARCH_ENABLED = True       # set False to disable internet search
-LIVE_SEARCH_SAMPLES = 5_000     # how many dataset rows to scan per query
+LIVE_SEARCH_SAMPLES = 10_000     # how many dataset rows to scan per query
 LIVE_SEARCH_MAX_MATCHES = 50    # max keyword matches to collect
-LIVE_SEARCH_MIN_SCORE = 0.3     # minimum similarity to include a passage
+LIVE_SEARCH_MIN_SCORE = 0.2     # minimum similarity to include a passage
 
 # Safe defaults in case functions are called before __main__ initializes
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -320,9 +322,20 @@ def search_huggingface_live(query: str, top_k: int = TOP_K) -> list[tuple[str, f
         return []
 
 
+def should_skip_rag(query: str) -> bool:
+    """Detect queries that don't need RAG (greetings, chitchat, meta questions)."""
+    chitchat = [
+        "how are you", "who are you", "what can you do", "help",
+        "what are your capabilities", "tell me about yourself"
+    ]
+    return any(phrase in query.lower() for phrase in chitchat)
+
+
 def retrieve_context(query: str) -> tuple[str, str]:
     """Retrieve relevant passages using layered search."""
-    # Skip RAG for very short or greeting-style queries
+    if should_skip_rag(query):
+        return "", "none"
+
     words = query.strip().split()
     if len(words) <= 2:
         return "", "none"
@@ -331,7 +344,7 @@ def retrieve_context(query: str) -> tuple[str, str]:
     best_local_score = max((s for _, s in local_results), default=0)
 
     live_results = []
-    if best_local_score < 0.5 and live_search_available:
+    if best_local_score < 0.35 and live_search_available:
         live_results = search_huggingface_live(query, TOP_K)
 
     all_results = []
@@ -359,6 +372,8 @@ def retrieve_context(query: str) -> tuple[str, str]:
 
 
 wordsegment.load()
+# Cache vocab as set for faster lookup
+WORDSEG_VOCAB = set(wordsegment.WORDS)
 
 def tokens_to_spaced_text(token_ids, tokenizer, start_idx):
     """Decode tokens and fix missing spaces using word segmentation."""
@@ -374,13 +389,47 @@ def tokens_to_spaced_text(token_ids, tokenizer, start_idx):
         if run.isupper():
             return run
         # Don't segment if it's already a known word (avoid breaking "scientific")
-        if run.lower() in wordsegment.WORDS:
+        if run.lower() in WORDSEG_VOCAB:
             return run
         return ' '.join(wordsegment.segment(run))
     
     result = re.sub(r'[a-zA-Z]{9,}', segment_run, raw)
     return result.strip()
 
+def validate_response(response: str, query: str) -> tuple[str, bool]:
+    """Check if response shows signs of hallucination/uncertainty."""
+    # Red flags for hallucination
+    hallucination_phrases = [
+        "according to", "in 2026", "in 2025", "recently announced",
+        "just released", "breaking news", "last week", "yesterday"
+    ]
+    
+    # Check if discussing future/very recent events
+    has_temporal_warning = any(phrase in response.lower() for phrase in hallucination_phrases)
+    
+    # Check if query asks about future
+    future_keywords = ["2025", "2026", "latest", "recent", "current", "now", "today"]
+    asks_about_future = any(kw in query.lower() for kw in future_keywords)
+    
+    if has_temporal_warning or asks_about_future:
+        warning = "\n\n⚠️  Note: This response may contain speculative or outdated information. My training data has a cutoff date."
+        return response + warning, True
+    
+    return response, False
+
+def estimate_tokens_needed(query: str) -> int:
+    """Adjust max_tokens based on query complexity."""
+    words = len(query.split())
+    
+    # Short factual questions
+    if words <= 10 and any(q in query.lower() for q in ["what is", "who is", "when", "where"]):
+        return 256
+    # Complex explanations
+    elif any(word in query.lower() for word in ["explain", "describe", "how does", "mechanism"]):
+        return 512
+    # Default
+    else:
+        return 384
 
 def generate_response(prompt: str) -> str:
     """Generate a response, augmented with retrieved context if available."""
@@ -389,63 +438,55 @@ def generate_response(prompt: str) -> str:
     if context:
         # Llama-2 style prompt
         full_prompt = (
-            f"Below is some educational context. Use it to answer the question at the end.\n\n"
+            f"Below is educational context. Answer the question using ONLY information from this context. "
+            f"If the context doesn't contain enough information, say 'I don't have enough information to answer that fully.'\n\n"
             f"### Context:\n{context}\n\n"
             f"### Question:\n{prompt}\n\n"
             f"### Answer:\n"
         )
     else:
-        full_prompt = f"### Question:\n{prompt}\n\n### Answer:\n"
+        full_prompt = (
+            f"### Question:\n{prompt}\n\n"
+            f"### Answer:\nI don't have specific context for this question, but based on general knowledge: "
+        )
 
     # Tokenize
+    max_tokens = estimate_tokens_needed(prompt)
     inputs = tokenizer(
         full_prompt,
         return_tensors="pt",
         truncation=True,
-        max_length=2048 - MAX_NEW_TOKENS
+        max_length=2048 - max_tokens
     ).to(device)
 
-    # Generate with OOM fallback
-    try:
-        with torch.no_grad():
-            outputs = model.generate(
-                input_ids=inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                max_new_tokens=MAX_NEW_TOKENS,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                repetition_penalty=REPETITION_PENALTY,
-                do_sample=True,
-                eos_token_id=tokenizer.eos_token_id,
-                pad_token_id=tokenizer.pad_token_id
-            )
-    except torch.cuda.OutOfMemoryError:
-        print("  [VRAM full, retrying with shorter output...]")
-        torch.cuda.empty_cache()
-        # Shorten both input and output for retry
-        inputs = tokenizer(
-            full_prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=1024
-        ).to(device)
-        with torch.no_grad():
-            outputs = model.generate(
-                input_ids=inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                max_new_tokens=256,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                repetition_penalty=REPETITION_PENALTY,
-                do_sample=True,
-                eos_token_id=tokenizer.eos_token_id,
-                pad_token_id=tokenizer.pad_token_id
-            )
+    # Generate with streaming
+    streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True, skip_prompt=True)
 
-    # Decode using the advanced space reconstruction workaround
-    input_length = inputs.input_ids.shape[1]
-    response = tokens_to_spaced_text(outputs[0], tokenizer, input_length)
-    return response, source
+    generation_kwargs = dict(
+        input_ids=inputs.input_ids,
+        attention_mask=inputs.attention_mask,
+        max_new_tokens=max_tokens,
+        temperature=TEMPERATURE,
+        top_p=TOP_P,
+        repetition_penalty=REPETITION_PENALTY,
+        do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.pad_token_id,
+        streamer=streamer
+    )
+
+    thread = Thread(target=model.generate, kwargs=generation_kwargs)
+    thread.start()
+
+    # Collect and fix spacing on the fly
+    raw_response = ""
+    for new_text in streamer:
+        print(new_text, end="", flush=True)
+        raw_response += new_text
+
+    # Apply word segmentation to fix missing spaces
+    response = re.sub(r'[a-zA-Z]{9,}', lambda m: ' '.join(wordsegment.segment(m.group(0))), raw_response)
+    return response.strip(), source
 
 
 if __name__ == "__main__":
@@ -473,11 +514,17 @@ if __name__ == "__main__":
                 print("Exiting chatbot...")
                 break
 
+            print("Bot: ", end="", flush=True)
             response, source = generate_response(prompt)
+            print()  # Final newline after streaming finishes
+
+            _, warned = validate_response(response, prompt)
 
             if source != "none":
                 print(f"  [Source: {source}]")
-            print(f"Bot: {response}\n")
+            if warned:
+                print("  [Warning: Uncertain information - verify independently]")
+            print()
         except KeyboardInterrupt:
             print("\nExiting chatbot...")
             break
