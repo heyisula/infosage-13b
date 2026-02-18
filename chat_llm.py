@@ -26,15 +26,13 @@ import re
 import json
 import inspect
 import multiprocessing
-from threading import Thread
 import wordsegment
 import torch
 import numpy as np
 from transformers import (
     AutoModelForCausalLM, 
     AutoTokenizer, 
-    BitsAndBytesConfig,
-    TextIteratorStreamer
+    BitsAndBytesConfig
 )
 from peft import PeftModel
 try:
@@ -375,26 +373,7 @@ wordsegment.load()
 # Cache vocab as set for faster lookup
 WORDSEG_VOCAB = set(wordsegment.WORDS)
 
-def tokens_to_spaced_text(token_ids, tokenizer, start_idx):
-    """Decode tokens and fix missing spaces using word segmentation."""
-    raw = tokenizer.decode(
-        token_ids[start_idx:],
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False
-    )
-    
-    def segment_run(match):
-        run = match.group(0)
-        # Don't segment all-caps acronyms like PIEZO, CRISPR, CAR
-        if run.isupper():
-            return run
-        # Don't segment if it's already a known word (avoid breaking "scientific")
-        if run.lower() in WORDSEG_VOCAB:
-            return run
-        return ' '.join(wordsegment.segment(run))
-    
-    result = re.sub(r'[a-zA-Z]{9,}', segment_run, raw)
-    return result.strip()
+
 
 def validate_response(response: str, query: str) -> tuple[str, bool]:
     """Check if response shows signs of hallucination/uncertainty."""
@@ -431,24 +410,21 @@ def estimate_tokens_needed(query: str) -> int:
     else:
         return 384
 
-def generate_response(prompt: str) -> str:
+def generate_response(prompt: str) -> tuple[str, str]:
     """Generate a response, augmented with retrieved context if available."""
     context, source = retrieve_context(prompt)
 
     if context:
-        # Llama-2 style prompt
+        # Simpler Llama-2 style prompt
         full_prompt = (
-            f"Below is educational context. Answer the question using ONLY information from this context. "
-            f"If the context doesn't contain enough information, say 'I don't have enough information to answer that fully.'\n\n"
-            f"### Context:\n{context}\n\n"
-            f"### Question:\n{prompt}\n\n"
-            f"### Answer:\n"
+            f"Use the following context to answer the question. "
+            f"If you cannot answer based on the context, say so.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Question: {prompt}\n"
+            f"Answer:"
         )
     else:
-        full_prompt = (
-            f"### Question:\n{prompt}\n\n"
-            f"### Answer:\nI don't have specific context for this question, but based on general knowledge: "
-        )
+        full_prompt = f"Question: {prompt}\nAnswer:"
 
     # Tokenize
     max_tokens = estimate_tokens_needed(prompt)
@@ -459,33 +435,78 @@ def generate_response(prompt: str) -> str:
         max_length=2048 - max_tokens
     ).to(device)
 
-    # Generate with streaming
-    streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True, skip_prompt=True)
+    # Generate with OOM fallback (no streaming until spacing is fixed in training)
+    try:
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids=inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+                max_new_tokens=max_tokens,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                repetition_penalty=REPETITION_PENALTY,
+                do_sample=True,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id
+            )
+    except torch.cuda.OutOfMemoryError:
+        print("  [VRAM full, retrying with shorter output...]")
+        torch.cuda.empty_cache()
+        inputs = tokenizer(full_prompt, return_tensors="pt", 
+                          truncation=True, max_length=1024).to(device)
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids=inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+                max_new_tokens=256,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                repetition_penalty=REPETITION_PENALTY,
+                do_sample=True,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id
+            )
 
-    generation_kwargs = dict(
-        input_ids=inputs.input_ids,
-        attention_mask=inputs.attention_mask,
-        max_new_tokens=max_tokens,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        repetition_penalty=REPETITION_PENALTY,
-        do_sample=True,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.pad_token_id,
-        streamer=streamer
+    # Decode and fix spacing
+    input_length = inputs.input_ids.shape[1]
+    raw_response = tokenizer.decode(
+        outputs[0][input_length:],
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False
     )
 
-    thread = Thread(target=model.generate, kwargs=generation_kwargs)
-    thread.start()
+    def segment_run(match):
+        run = match.group(0)
+        # Don't segment all-caps acronyms (any length if all caps)
+        if run.isupper():
+            return run
+        if run.lower() in WORDSEG_VOCAB:
+            return run
+        return ' '.join(wordsegment.segment(run))
 
-    # Collect and fix spacing on the fly
-    raw_response = ""
-    for new_text in streamer:
-        print(new_text, end="", flush=True)
-        raw_response += new_text
-
-    # Apply word segmentation to fix missing spaces
-    response = re.sub(r'[a-zA-Z]{9,}', lambda m: ' '.join(wordsegment.segment(m.group(0))), raw_response)
+    # Apply word segmentation to the final result
+    response = re.sub(r'[a-zA-Z]{9,}', segment_run, raw_response)
+    
+    # Clean up metadata artifacts from scraped web content
+    cleanup_patterns = [
+        r'\[Reference:.*?\]',           # Remove [Reference:[1]]
+        r'\|answered by\|.*?\|',        # Remove |answered by|name|
+        r'\|date created\|.*?\|',       # Remove |date created|date|
+        r'\|last updated\|.*?\|',       # Remove |last updated|date|
+        r'\|[Cc]omments\|.*',           # Remove |Comments|None|
+        r'answered by:.*?(?=\n|$)',    # Remove "answered by: name"
+        r'date created:.*?(?=\n|$)',   # Remove "date created: date"
+        r'last updated:.*?(?=\n|$)',   # Remove "last updated: date"
+        r'\bComments:.*?(?=\n|$)',     # Remove "Comments: None"
+    ]
+    
+    for pattern in cleanup_patterns:
+        response = re.sub(pattern, '', response, flags=re.IGNORECASE | re.DOTALL)
+    
+    # Collapse multiple spaces/newlines and clean up
+    response = re.sub(r'\s+', ' ', response).strip()
+    response = re.sub(r'\s*\|\s*$', '', response)  # Remove trailing pipes
+    
     return response.strip(), source
 
 
@@ -514,17 +535,14 @@ if __name__ == "__main__":
                 print("Exiting chatbot...")
                 break
 
-            print("Bot: ", end="", flush=True)
             response, source = generate_response(prompt)
-            print()  # Final newline after streaming finishes
-
-            _, warned = validate_response(response, prompt)
+            response, warned = validate_response(response, prompt)
 
             if source != "none":
                 print(f"  [Source: {source}]")
             if warned:
                 print("  [Warning: Uncertain information - verify independently]")
-            print()
+            print(f"Bot: {response}\n")
         except KeyboardInterrupt:
             print("\nExiting chatbot...")
             break
