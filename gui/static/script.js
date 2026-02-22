@@ -204,7 +204,7 @@ async function sendMessage() {
         removeTyping(typingID);
 
         if (data.error) {
-            renderMessage('bot', `⚠️ Error: ${data.error}`);
+            renderMessage('bot', ` Error: ${data.error}`);
         } else {
             renderMessage('bot', data.response, data.source);
             messages.push({ role: 'bot', content: data.response, source: data.source });
@@ -221,7 +221,7 @@ async function sendMessage() {
 
     } catch (e) {
         removeTyping(typingID);
-        renderMessage('bot', `⚠️ Connection Failure: ${e.message}`);
+        renderMessage('bot', ` Connection Failure: ${e.message}`);
     }
 
     isGenerating = false;

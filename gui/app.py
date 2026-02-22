@@ -11,14 +11,13 @@ Usage:
 import sys
 import os
 
-# Add project root to path so we can import chat_llm
+# Adding project root to path to import chat_llm.py
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 import chat_llm
 import logging
-# Re-enable logging because chat_llm disables it
-logging.disable(logging.NOTSET)
+logging.disable(logging.NOTSET) #Enabling logging for debugging
 
 
 from flask import Flask, render_template, request, jsonify
@@ -36,7 +35,7 @@ log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
 
-# Explicitly set paths to avoid ambiguity when running from adjacent dirs
+# Explicitly set paths to avoid ambiguity when running from adjacent directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, 
             static_folder=os.path.join(BASE_DIR, 'static'),
@@ -114,10 +113,10 @@ def load_model():
         chat_llm.tokenizer.padding_side = "left"
         # logging.info("Tokenizer loaded.")
 
-        # Patch adapter config
+        # Patch adapter configuration to fix PEFT version mismatch issues (if any)
         patch_adapter_config(chat_llm.ADAPTER_DIR)
 
-        # Quantization config
+        # Quantization configuration for 4-bit loading using bitsandbytes
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
@@ -171,7 +170,7 @@ def load_model():
             except ImportError:
                 print("faiss-cpu not installed. Local RAG disabled.")
 
-        # Live search
+        # Live search capability from Fine Edu Hugging Face Dataset
         if chat_llm.LIVE_SEARCH_ENABLED and chat_llm.embedder:
             try:
                 from datasets import load_dataset

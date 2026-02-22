@@ -368,12 +368,9 @@ def retrieve_context(query: str) -> tuple[str, str]:
     source_label = " + ".join(sorted(sources))
     return "\n\n".join(context_parts), source_label
 
-
 wordsegment.load()
 # Cache vocab as set for faster lookup
 WORDSEG_VOCAB = set(wordsegment.WORDS)
-
-
 
 def validate_response(response: str, query: str) -> tuple[str, bool]:
     """Check if response shows signs of hallucination/uncertainty."""
@@ -391,7 +388,7 @@ def validate_response(response: str, query: str) -> tuple[str, bool]:
     asks_about_future = any(kw in query.lower() for kw in future_keywords)
     
     if has_temporal_warning or asks_about_future:
-        warning = "\n\n⚠️  Note: This response may contain speculative or outdated information. My training data has a cutoff date."
+        warning = "\n\n  Note: This response may contain speculative or outdated information. My training data has a cutoff date."
         return response + warning, True
     
     return response, False
@@ -426,7 +423,7 @@ def generate_response(prompt: str) -> tuple[str, str]:
     else:
         full_prompt = f"Question: {prompt}\nAnswer:"
 
-    # Tokenize
+    # Dynamic Token ALlocation based on query complexity
     max_tokens = estimate_tokens_needed(prompt)
     inputs = tokenizer(
         full_prompt,
@@ -487,7 +484,7 @@ def generate_response(prompt: str) -> tuple[str, str]:
     # Apply word segmentation to the final result
     response = re.sub(r'[a-zA-Z]{9,}', segment_run, raw_response)
     
-    # Clean up metadata artifacts from scraped web content
+    # Cleaning  metadata artifacts from scraped web content
     cleanup_patterns = [
         r'\[Reference:.*?\]',           # Remove [Reference:[1]]
         r'\|answered by\|.*?\|',        # Remove |answered by|name|
@@ -513,7 +510,7 @@ def generate_response(prompt: str) -> tuple[str, str]:
 if __name__ == "__main__":
     # Chat Loop
     print("\n" + "=" * 60)
-    print("  Llama-2-13B Educational Chatbot")
+    print("  InfoSage-13B Chatbot")
     features = []
     if local_rag_available:
         features.append("Local RAG index")
